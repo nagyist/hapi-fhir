@@ -1,5 +1,8 @@
 package ca.uhn.fhir.jpa.provider.dstu3;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import ca.uhn.fhir.jpa.api.config.JpaStorageSettings;
 import ca.uhn.fhir.parser.StrictErrorHandler;
 import ca.uhn.fhir.rest.api.EncodingEnum;
@@ -10,6 +13,7 @@ import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.hl7.fhir.dstu3.model.Bundle;
 import org.hl7.fhir.dstu3.model.Bundle.BundleEntryComponent;
+import org.hl7.fhir.dstu3.model.CarePlan;
 import org.hl7.fhir.dstu3.model.Encounter;
 import org.hl7.fhir.dstu3.model.Encounter.EncounterStatus;
 import org.hl7.fhir.dstu3.model.Observation;
@@ -26,14 +30,7 @@ import java.util.ArrayList;
 import java.util.Set;
 import java.util.TreeSet;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.containsString;
-import static org.hamcrest.Matchers.hasItem;
-import static org.hamcrest.Matchers.hasItems;
-import static org.hamcrest.Matchers.not;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.assertj.core.api.Assertions.assertThat;
 
 public class PatientEverythingDstu3Test extends BaseResourceProviderDstu3Test {
 
@@ -121,7 +118,7 @@ public class PatientEverythingDstu3Test extends BaseResourceProviderDstu3Test {
 	public void testEverythingReturnsCorrectResources() throws Exception {
 		
 		Bundle bundle = fetchBundle(myServerBase + "/" + myPatientId + "/$everything?_format=json&_count=100", EncodingEnum.JSON);
-		
+
 		assertNull(bundle.getLink("next"));
 		
 		Set<String> actual = new TreeSet<String>();
@@ -130,28 +127,29 @@ public class PatientEverythingDstu3Test extends BaseResourceProviderDstu3Test {
 		}
 		
 		ourLog.info("Found IDs: {}", actual);
-		
-		assertThat(actual, hasItem(myPatientId));
-		assertThat(actual, hasItem(encId1));
-		assertThat(actual, hasItem(encId2));
-		assertThat(actual, hasItem(myOrgId));
-		assertThat(actual, hasItems(myObsIds.toArray(new String[0])));
-		assertThat(actual, not(hasItem(myWrongPatId)));
-		assertThat(actual, not(hasItem(myWrongEnc1)));
+
+		assertThat(actual).contains(myPatientId);
+		assertThat(actual).contains(encId1);
+		assertThat(actual).contains(encId2);
+		assertThat(actual).contains(myOrgId);
+		assertThat(actual).contains(myObsIds.toArray(new String[0]));
+		assertThat(actual).doesNotContain(myWrongPatId);
+		assertThat(actual).doesNotContain(myWrongEnc1);
 	}
 
 	@Test
 	public void testEverythingHandlesCircularReferences() throws Exception {
-		Patient linkedPatient1 = new Patient();
-		linkedPatient1.addLink().setOther(new Reference(myPatientId));
-		String linkedPatient1Id = myClient.create().resource(linkedPatient1).execute().getId().toUnqualifiedVersionless().getValue();
+		CarePlan cp1 = new CarePlan();
+		cp1.setSubject(new Reference(myPatientId));
+		String cp1Id = myClient.create().resource(cp1).execute().getId().toUnqualifiedVersionless().getValue();
 
-		Patient linkedPatient2 = new Patient();
-		linkedPatient2.addLink().setOther(new Reference(linkedPatient1Id));
-		String linkedPatient2Id = myClient.create().resource(linkedPatient2).execute().getId().toUnqualifiedVersionless().getValue();
+		CarePlan cp2 = new CarePlan();
+		cp2.addBasedOn(new Reference(cp1Id));
+		String cp2Id = myClient.create().resource(cp2).execute().getId().toUnqualifiedVersionless().getValue();
 
-		myPatient.addLink().setOther(new Reference(linkedPatient2Id));
-		myClient.update().resource(myPatient).execute();
+		cp1.addBasedOn(new Reference(cp2Id));
+		cp1.setId(cp1Id);
+		myClient.update().resource(cp1).execute();
 
 		Bundle bundle = fetchBundle(myServerBase + "/" + myPatientId + "/$everything?_format=json&_count=100", EncodingEnum.JSON);
 
@@ -164,16 +162,15 @@ public class PatientEverythingDstu3Test extends BaseResourceProviderDstu3Test {
 
 		ourLog.info("Found IDs: {}", actual);
 
-		assertThat(actual, hasItem(myPatientId));
-		assertThat(actual, hasItem(linkedPatient1Id));
-		assertThat(actual, hasItem(linkedPatient2Id));
-		assertThat(actual, hasItem(encId1));
-		assertThat(actual, hasItem(encId2));
-		assertThat(actual, hasItem(myOrgId));
-		assertThat(actual, hasItems(myObsIds.toArray(new String[0])));
-		assertThat(actual, not(hasItem(myWrongPatId)));
-		assertThat(actual, not(hasItem(myWrongEnc1)));
-
+		assertThat(actual).contains(myPatientId);
+		assertThat(actual).contains(cp1Id);
+		assertThat(actual).contains(cp2Id);
+		assertThat(actual).contains(encId1);
+		assertThat(actual).contains(encId2);
+		assertThat(actual).contains(myOrgId);
+		assertThat(actual).contains(myObsIds.toArray(new String[0]));
+		assertThat(actual).doesNotContain(myWrongPatId);
+		assertThat(actual).doesNotContain(myWrongEnc1);
 	}
 
 	/**
@@ -184,7 +181,7 @@ public class PatientEverythingDstu3Test extends BaseResourceProviderDstu3Test {
 		myStorageSettings.setEverythingIncludesFetchPageSize(1);
 		
 		Bundle bundle = fetchBundle(myServerBase + "/" + myPatientId + "/$everything?_format=json&_count=100", EncodingEnum.JSON);
-		
+
 		assertNull(bundle.getLink("next"));
 		
 		Set<String> actual = new TreeSet<String>();
@@ -193,14 +190,14 @@ public class PatientEverythingDstu3Test extends BaseResourceProviderDstu3Test {
 		}
 		
 		ourLog.info("Found IDs: {}", actual);
-		
-		assertThat(actual, hasItem(myPatientId));
-		assertThat(actual, hasItem(encId1));
-		assertThat(actual, hasItem(encId2));
-		assertThat(actual, hasItem(myOrgId));
-		assertThat(actual, hasItems(myObsIds.toArray(new String[0])));
-		assertThat(actual, not(hasItem(myWrongPatId)));
-		assertThat(actual, not(hasItem(myWrongEnc1)));
+
+		assertThat(actual).contains(myPatientId);
+		assertThat(actual).contains(encId1);
+		assertThat(actual).contains(encId2);
+		assertThat(actual).contains(myOrgId);
+		assertThat(actual).contains(myObsIds.toArray(new String[0]));
+		assertThat(actual).doesNotContain(myWrongPatId);
+		assertThat(actual).doesNotContain(myWrongEnc1);
 	}
 	
 	/**
@@ -210,13 +207,13 @@ public class PatientEverythingDstu3Test extends BaseResourceProviderDstu3Test {
 	public void testEverythingPagesWithCorrectEncodingJson() throws Exception {
 		
 		Bundle bundle = fetchBundle(myServerBase + "/" + myPatientId + "/$everything?_format=json&_count=1", EncodingEnum.JSON);
-		
+
 		assertNotNull(bundle.getLink("next").getUrl());
-		assertThat(bundle.getLink("next").getUrl(), containsString("_format=json"));
+		assertThat(bundle.getLink("next").getUrl()).contains("_format=json");
 		bundle = fetchBundle(bundle.getLink("next").getUrl(), EncodingEnum.JSON);
-		
+
 		assertNotNull(bundle.getLink("next").getUrl());
-		assertThat(bundle.getLink("next").getUrl(), containsString("_format=json"));
+		assertThat(bundle.getLink("next").getUrl()).contains("_format=json");
 		bundle = fetchBundle(bundle.getLink("next").getUrl(), EncodingEnum.JSON);
 	}
 
@@ -227,15 +224,15 @@ public class PatientEverythingDstu3Test extends BaseResourceProviderDstu3Test {
 	public void testEverythingPagesWithCorrectEncodingXml() throws Exception {
 		
 		Bundle bundle = fetchBundle(myServerBase + "/" + myPatientId + "/$everything?_format=xml&_count=1", EncodingEnum.XML);
-		
+
 		assertNotNull(bundle.getLink("next").getUrl());
 		ourLog.info("Next link: {}", bundle.getLink("next").getUrl());
-		assertThat(bundle.getLink("next").getUrl(), containsString("_format=xml"));
+		assertThat(bundle.getLink("next").getUrl()).contains("_format=xml");
 		bundle = fetchBundle(bundle.getLink("next").getUrl(), EncodingEnum.XML);
 
 		assertNotNull(bundle.getLink("next").getUrl());
 		ourLog.info("Next link: {}", bundle.getLink("next").getUrl());
-		assertThat(bundle.getLink("next").getUrl(), containsString("_format=xml"));
+		assertThat(bundle.getLink("next").getUrl()).contains("_format=xml");
 		bundle = fetchBundle(bundle.getLink("next").getUrl(), EncodingEnum.XML);
 	}
 

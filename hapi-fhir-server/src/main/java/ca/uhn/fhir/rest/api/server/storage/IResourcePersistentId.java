@@ -1,10 +1,8 @@
-package ca.uhn.fhir.rest.api.server.storage;
-
 /*-
  * #%L
  * HAPI FHIR - Server Framework
  * %%
- * Copyright (C) 2014 - 2023 Smile CDR, Inc.
+ * Copyright (C) 2014 - 2025 Smile CDR, Inc.
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,10 +17,12 @@ package ca.uhn.fhir.rest.api.server.storage;
  * limitations under the License.
  * #L%
  */
+package ca.uhn.fhir.rest.api.server.storage;
 
 import org.hl7.fhir.instance.model.api.IIdType;
 
 public interface IResourcePersistentId<T> {
+
 	IResourcePersistentId NOT_FOUND = new NotFoundPid();
 
 	IIdType getAssociatedResourceId();
@@ -31,12 +31,16 @@ public interface IResourcePersistentId<T> {
 
 	T getId();
 
+	default Integer getPartitionId() {
+		return null;
+	}
+
 	Long getVersion();
+
 	/**
 	 * @param theVersion This should only be populated if a specific version is needed. If you want the current version,
 	 *                   leave this as <code>null</code>
 	 */
-
 	void setVersion(Long theVersion);
 
 	/**

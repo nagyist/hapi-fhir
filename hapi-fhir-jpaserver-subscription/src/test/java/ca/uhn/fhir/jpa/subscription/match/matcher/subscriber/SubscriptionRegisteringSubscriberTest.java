@@ -4,15 +4,19 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.interceptor.model.RequestPartitionId;
 import ca.uhn.fhir.jpa.api.dao.DaoRegistry;
 import ca.uhn.fhir.jpa.api.dao.IFhirResourceDao;
-import ca.uhn.fhir.rest.api.server.SystemRequestDetails;
+import ca.uhn.fhir.jpa.model.entity.StorageSettings;
 import ca.uhn.fhir.jpa.subscription.match.registry.SubscriptionCanonicalizer;
 import ca.uhn.fhir.jpa.subscription.match.registry.SubscriptionRegistry;
 import ca.uhn.fhir.jpa.subscription.model.ResourceModifiedJsonMessage;
 import ca.uhn.fhir.jpa.subscription.model.ResourceModifiedMessage;
+import ca.uhn.fhir.jpa.model.config.SubscriptionSettings;
+import ca.uhn.fhir.model.api.ResourceMetadataKeyEnum;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
-import ca.uhn.fhir.rest.server.exceptions.ResourceGoneException;
+import ca.uhn.fhir.rest.api.server.SystemRequestDetails;
 import ca.uhn.fhir.rest.server.messaging.BaseResourceMessage;
 import ca.uhn.fhir.rest.server.messaging.json.ResourceOperationJsonMessage;
+import jakarta.annotation.Nonnull;
+import org.hl7.fhir.r4.model.InstantType;
 import org.hl7.fhir.r4.model.Subscription;
 import org.hl7.fhir.r4.model.codesystems.SubscriptionStatus;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,9 +35,10 @@ import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -46,8 +51,8 @@ public class SubscriptionRegisteringSubscriberTest {
 	private FhirContext myFhirContext = FhirContext.forR4Cached();
 	@Mock
 	private SubscriptionRegistry mySubscriptionRegistry;
-	@Mock
-	private SubscriptionCanonicalizer mySubscriptionCanonicalizer;
+	@Spy
+	private SubscriptionCanonicalizer mySubscriptionCanonicalizer = new SubscriptionCanonicalizer(myFhirContext, new SubscriptionSettings());
 	@Mock
 	private DaoRegistry myDaoRegistry;
 	@Mock
@@ -61,8 +66,15 @@ public class SubscriptionRegisteringSubscriberTest {
 
 	@BeforeEach
 	public void beforeEach() {
-		mySubscription = new Subscription();
-		mySubscription.setId("Subscription/testrest");
+		mySubscription = buildSubscription();
+	}
+
+	@Nonnull
+	private static Subscription buildSubscription() {
+		Subscription subscription = new Subscription();
+		subscription.setId("Subscription/testrest");
+		subscription.setStatus(Subscription.SubscriptionStatus.ACTIVE);
+		return subscription;
 	}
 
 	@Test
@@ -70,7 +82,7 @@ public class SubscriptionRegisteringSubscriberTest {
 		ResourceOperationJsonMessage message = new ResourceOperationJsonMessage();
 		mySubscriptionRegisteringSubscriber.handleMessage(message);
 		String expectedMessage = String.format("Received message of unexpected type on matching channel: %s", message);
-		assertTrue(output.getOut().contains(expectedMessage));
+		assertThat(output.getOut()).contains(expectedMessage);
 	}
 
 	@Test
@@ -79,7 +91,9 @@ public class SubscriptionRegisteringSubscriberTest {
 		ResourceModifiedJsonMessage message = new ResourceModifiedJsonMessage(resourceModifiedMessage);
 
 		when(myDaoRegistry.getResourceDao("Subscription")).thenReturn(mySubscriptionDao);
-		when(mySubscriptionDao.read(any(), any())).thenThrow(ResourceGoneException.class);
+		Subscription deletedSubscription = buildSubscription();
+		ResourceMetadataKeyEnum.DELETED_AT.put(deletedSubscription, InstantType.withCurrentTime());
+		when(mySubscriptionDao.read(any(), any(), eq(true))).thenReturn(deletedSubscription);
 
 		mySubscriptionRegisteringSubscriber.handleMessage(message);
 		verify(mySubscriptionRegistry, times(1)).unregisterSubscriptionIfRegistered(any());
@@ -92,7 +106,7 @@ public class SubscriptionRegisteringSubscriberTest {
 		ResourceModifiedJsonMessage message = new ResourceModifiedJsonMessage(resourceModifiedMessage);
 
 		when(myDaoRegistry.getResourceDao("Subscription")).thenReturn(mySubscriptionDao);
-		when(mySubscriptionDao.read(any(), any())).thenReturn(mySubscription);
+		when(mySubscriptionDao.read(any(), any(), eq(true))).thenReturn(mySubscription);
 		when(mySubscriptionCanonicalizer.getSubscriptionStatus(mySubscription)).thenReturn(SubscriptionStatus.ACTIVE.toCode());
 
 		mySubscriptionRegisteringSubscriber.handleMessage(message);
@@ -106,7 +120,7 @@ public class SubscriptionRegisteringSubscriberTest {
 		ResourceModifiedJsonMessage message = new ResourceModifiedJsonMessage(resourceModifiedMessage);
 
 		when(myDaoRegistry.getResourceDao("Subscription")).thenReturn(mySubscriptionDao);
-		when(mySubscriptionDao.read(any(), any())).thenReturn(mySubscription);
+		when(mySubscriptionDao.read(any(), any(), eq(true))).thenReturn(mySubscription);
 		when(mySubscriptionCanonicalizer.getSubscriptionStatus(mySubscription)).thenReturn(SubscriptionStatus.ERROR.toCode());
 
 		mySubscriptionRegisteringSubscriber.handleMessage(message);
@@ -126,7 +140,7 @@ public class SubscriptionRegisteringSubscriberTest {
 		ResourceModifiedJsonMessage message = new ResourceModifiedJsonMessage(resourceModifiedMessage);
 
 		when(myDaoRegistry.getResourceDao("Subscription")).thenReturn(mySubscriptionDao);
-		when(mySubscriptionDao.read(any(), requestDetailsCaptor.capture())).thenReturn(mySubscription);
+		when(mySubscriptionDao.read(any(), requestDetailsCaptor.capture(), eq(true))).thenReturn(mySubscription);
 		when(mySubscriptionCanonicalizer.getSubscriptionStatus(mySubscription)).thenReturn(SubscriptionStatus.ACTIVE.toCode());
 
 		mySubscriptionRegisteringSubscriber.handleMessage(message);
@@ -147,7 +161,7 @@ public class SubscriptionRegisteringSubscriberTest {
 		ResourceModifiedJsonMessage message = new ResourceModifiedJsonMessage(resourceModifiedMessage);
 
 		when(myDaoRegistry.getResourceDao("Subscription")).thenReturn(mySubscriptionDao);
-		when(mySubscriptionDao.read(any(), requestDetailsCaptor.capture())).thenReturn(mySubscription);
+		when(mySubscriptionDao.read(any(), requestDetailsCaptor.capture(), eq(true))).thenReturn(mySubscription);
 		when(mySubscriptionCanonicalizer.getSubscriptionStatus(mySubscription)).thenReturn(SubscriptionStatus.ACTIVE.toCode());
 
 		mySubscriptionRegisteringSubscriber.handleMessage(message);

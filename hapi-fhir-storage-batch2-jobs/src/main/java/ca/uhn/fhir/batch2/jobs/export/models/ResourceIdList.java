@@ -1,10 +1,8 @@
-package ca.uhn.fhir.batch2.jobs.export.models;
-
 /*-
  * #%L
  * hapi-fhir-storage-batch2-jobs
  * %%
- * Copyright (C) 2014 - 2023 Smile CDR, Inc.
+ * Copyright (C) 2014 - 2025 Smile CDR, Inc.
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,8 +17,9 @@ package ca.uhn.fhir.batch2.jobs.export.models;
  * limitations under the License.
  * #L%
  */
+package ca.uhn.fhir.batch2.jobs.export.models;
 
-import ca.uhn.fhir.batch2.jobs.models.BatchResourceId;
+import ca.uhn.fhir.batch2.jobs.chunk.TypedPidJson;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.List;
@@ -31,16 +30,16 @@ public class ResourceIdList extends BulkExportJobBase {
 	 * List of Id objects for serialization
 	 */
 	@JsonProperty("ids")
-	private List<BatchResourceId> myBatchResourceIds;
+	private List<TypedPidJson> myBatchResourceIds;
 
 	@JsonProperty("resourceType")
 	private String myResourceType;
 
-	public List<BatchResourceId> getIds() {
+	public List<TypedPidJson> getIds() {
 		return myBatchResourceIds;
 	}
 
-	public void setIds(List<BatchResourceId> theBatchResourceIds) {
+	public void setIds(List<TypedPidJson> theBatchResourceIds) {
 		myBatchResourceIds = theBatchResourceIds;
 	}
 

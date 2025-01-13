@@ -1,10 +1,8 @@
-package ca.uhn.fhir.util;
-
 /*-
  * #%L
  * HAPI FHIR Storage api
  * %%
- * Copyright (C) 2014 - 2023 Smile CDR, Inc.
+ * Copyright (C) 2014 - 2025 Smile CDR, Inc.
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,14 +17,17 @@ package ca.uhn.fhir.util;
  * limitations under the License.
  * #L%
  */
+package ca.uhn.fhir.util;
 
 import ca.uhn.fhir.i18n.Msg;
 import ca.uhn.fhir.model.api.IElement;
 import ca.uhn.fhir.model.base.composite.BaseIdentifierDt;
 import ca.uhn.fhir.model.primitive.StringDt;
 import ca.uhn.fhir.model.primitive.UriDt;
+import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import org.apache.commons.lang3.builder.EqualsBuilder;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
+import org.hl7.fhir.instance.model.api.IBase;
 
 import java.util.List;
 
@@ -84,16 +85,33 @@ public class CanonicalIdentifier extends BaseIdentifierDt {
 		CanonicalIdentifier that = (CanonicalIdentifier) theO;
 
 		return new EqualsBuilder()
-			.append(mySystem, that.mySystem)
-			.append(myValue, that.myValue)
-			.isEquals();
+				.append(mySystem, that.mySystem)
+				.append(myValue, that.myValue)
+				.isEquals();
 	}
 
 	@Override
 	public int hashCode() {
-		return new HashCodeBuilder(17, 37)
-			.append(mySystem)
-			.append(myValue)
-			.toHashCode();
+		return new HashCodeBuilder(17, 37).append(mySystem).append(myValue).toHashCode();
+	}
+
+	public static CanonicalIdentifier fromIdentifier(IBase theIdentifier) {
+		CanonicalIdentifier retval = new CanonicalIdentifier();
+
+		// TODO add other fields like "use" etc
+		if (theIdentifier instanceof org.hl7.fhir.dstu3.model.Identifier) {
+			org.hl7.fhir.dstu3.model.Identifier ident = (org.hl7.fhir.dstu3.model.Identifier) theIdentifier;
+			retval.setSystem(ident.getSystem()).setValue(ident.getValue());
+		} else if (theIdentifier instanceof org.hl7.fhir.r4.model.Identifier) {
+			org.hl7.fhir.r4.model.Identifier ident = (org.hl7.fhir.r4.model.Identifier) theIdentifier;
+			retval.setSystem(ident.getSystem()).setValue(ident.getValue());
+		} else if (theIdentifier instanceof org.hl7.fhir.r5.model.Identifier) {
+			org.hl7.fhir.r5.model.Identifier ident = (org.hl7.fhir.r5.model.Identifier) theIdentifier;
+			retval.setSystem(ident.getSystem()).setValue(ident.getValue());
+		} else {
+			throw new InternalErrorException(Msg.code(1486) + "Expected 'Identifier' type but was '"
+					+ theIdentifier.getClass().getName() + "'");
+		}
+		return retval;
 	}
 }

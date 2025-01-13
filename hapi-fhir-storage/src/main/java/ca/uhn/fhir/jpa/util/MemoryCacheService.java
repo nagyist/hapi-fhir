@@ -1,10 +1,8 @@
-package ca.uhn.fhir.jpa.util;
-
 /*-
  * #%L
  * HAPI FHIR Storage api
  * %%
- * Copyright (C) 2014 - 2023 Smile CDR, Inc.
+ * Copyright (C) 2014 - 2025 Smile CDR, Inc.
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,21 +17,30 @@ package ca.uhn.fhir.jpa.util;
  * limitations under the License.
  * #L%
  */
+package ca.uhn.fhir.jpa.util;
 
+import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.interceptor.model.RequestPartitionId;
 import ca.uhn.fhir.jpa.api.config.JpaStorageSettings;
-import ca.uhn.fhir.jpa.api.model.TranslationQuery;
+import ca.uhn.fhir.jpa.model.dao.JpaPid;
 import ca.uhn.fhir.jpa.model.entity.TagTypeEnum;
 import ca.uhn.fhir.sl.cache.Cache;
 import ca.uhn.fhir.sl.cache.CacheFactory;
+import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 import org.apache.commons.lang3.builder.EqualsBuilder;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
+import org.apache.commons.lang3.builder.ToStringBuilder;
+import org.apache.commons.lang3.builder.ToStringStyle;
+import org.hl7.fhir.instance.model.api.IIdType;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import javax.annotation.Nonnull;
 import java.util.Collection;
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 
 import static java.util.concurrent.TimeUnit.MINUTES;
@@ -65,18 +72,15 @@ public class MemoryCacheService {
 			int maximumSize;
 
 			switch (next) {
-				case CONCEPT_TRANSLATION:
-				case CONCEPT_TRANSLATION_REVERSE:
-					timeoutSeconds = SECONDS.convert(myStorageSettings.getTranslationCachesExpireAfterWriteInMinutes(), MINUTES);
-					maximumSize = 10000;
-					break;
+				case NAME_TO_PARTITION:
+				case ID_TO_PARTITION:
 				case PID_TO_FORCED_ID:
-				case FORCED_ID_TO_PID:
 				case MATCH_URL:
-				case RESOURCE_LOOKUP:
+				case RESOURCE_LOOKUP_BY_FORCED_ID:
 				case HISTORY_COUNT:
 				case TAG_DEFINITION:
 				case RESOURCE_CONDITIONAL_CREATE_VERSION:
+				case FHIRPATH_EXPRESSION:
 				default:
 					timeoutSeconds = SECONDS.convert(1, MINUTES);
 					maximumSize = 10000;
@@ -92,7 +96,6 @@ public class MemoryCacheService {
 			myCaches.put(next, nextCache);
 		}
 	}
-
 
 	public <K, T> T get(CacheEnum theCache, K theKey, Function<K, T> theSupplier) {
 		assert theCache.getKeyType().isAssignableFrom(theKey.getClass());
@@ -130,7 +133,9 @@ public class MemoryCacheService {
 	}
 
 	public <K, V> void put(CacheEnum theCache, K theKey, V theValue) {
-		assert theCache.getKeyType().isAssignableFrom(theKey.getClass());
+		assert theCache.getKeyType().isAssignableFrom(theKey.getClass())
+				: "Key type " + theKey.getClass() + " doesn't match expected " + theCache.getKeyType() + " for cache "
+						+ theCache;
 		doPut(theCache, theKey, theValue);
 	}
 
@@ -150,6 +155,9 @@ public class MemoryCacheService {
 	 * in order to avoid cache poisoning.
 	 */
 	public <K, V> void putAfterCommit(CacheEnum theCache, K theKey, V theValue) {
+		assert theCache.getKeyType().isAssignableFrom(theKey.getClass())
+				: "Key type " + theKey.getClass() + " doesn't match expected " + theCache.getKeyType() + " for cache "
+						+ theCache;
 		if (TransactionSynchronizationManager.isSynchronizationActive()) {
 			TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
 				@Override
@@ -184,50 +192,65 @@ public class MemoryCacheService {
 		return getCache(theCache).estimatedSize();
 	}
 
-	public enum CacheEnum {
+	public void invalidateCaches(CacheEnum... theCaches) {
+		for (CacheEnum next : theCaches) {
+			getCache(next).invalidateAll();
+		}
+	}
 
+	public enum CacheEnum {
 		TAG_DEFINITION(TagDefinitionCacheKey.class),
-		RESOURCE_LOOKUP(String.class),
-		FORCED_ID_TO_PID(String.class),
+		/**
+		 * Key type: {@link ForcedIdCacheKey}
+		 * Value type: {@literal JpaResourceLookup}
+		 */
+		RESOURCE_LOOKUP_BY_FORCED_ID(ForcedIdCacheKey.class),
+		FHIRPATH_EXPRESSION(String.class),
 		/**
 		 * Key type: {@literal Long}
 		 * Value type: {@literal Optional<String>}
 		 */
-		PID_TO_FORCED_ID(Long.class),
-		CONCEPT_TRANSLATION(TranslationQuery.class),
+		PID_TO_FORCED_ID(JpaPid.class),
 		MATCH_URL(String.class),
-		CONCEPT_TRANSLATION_REVERSE(TranslationQuery.class),
 		RESOURCE_CONDITIONAL_CREATE_VERSION(Long.class),
-		HISTORY_COUNT(HistoryCountKey.class);
-
-		public Class<?> getKeyType() {
-			return myKeyType;
-		}
+		HISTORY_COUNT(HistoryCountKey.class),
+		NAME_TO_PARTITION(String.class),
+		ID_TO_PARTITION(Integer.class);
 
 		private final Class<?> myKeyType;
 
 		CacheEnum(Class<?> theKeyType) {
 			myKeyType = theKeyType;
 		}
-	}
 
+		public Class<?> getKeyType() {
+			return myKeyType;
+		}
+	}
 
 	public static class TagDefinitionCacheKey {
 
 		private final TagTypeEnum myType;
 		private final String mySystem;
 		private final String myCode;
+		private final String myVersion;
 		private final int myHashCode;
+		private Boolean myUserSelected;
 
-		public TagDefinitionCacheKey(TagTypeEnum theType, String theSystem, String theCode) {
+		public TagDefinitionCacheKey(
+				TagTypeEnum theType, String theSystem, String theCode, String theVersion, Boolean theUserSelected) {
 			myType = theType;
 			mySystem = theSystem;
 			myCode = theCode;
+			myVersion = theVersion;
+			myUserSelected = theUserSelected;
 			myHashCode = new HashCodeBuilder(17, 37)
-				.append(myType)
-				.append(mySystem)
-				.append(myCode)
-				.toHashCode();
+					.append(myType)
+					.append(mySystem)
+					.append(myCode)
+					.append(myVersion)
+					.append(myUserSelected)
+					.toHashCode();
 		}
 
 		@Override
@@ -237,10 +260,10 @@ public class MemoryCacheService {
 				TagDefinitionCacheKey that = (TagDefinitionCacheKey) theO;
 
 				retVal = new EqualsBuilder()
-					.append(myType, that.myType)
-					.append(mySystem, that.mySystem)
-					.append(myCode, that.myCode)
-					.isEquals();
+						.append(myType, that.myType)
+						.append(mySystem, that.mySystem)
+						.append(myCode, that.myCode)
+						.isEquals();
 			}
 			return retVal;
 		}
@@ -251,16 +274,44 @@ public class MemoryCacheService {
 		}
 	}
 
-
 	public static class HistoryCountKey {
 		private final String myTypeName;
 		private final Long myInstanceId;
+		private final Integer myPartitionId;
 		private final int myHashCode;
 
-		private HistoryCountKey(String theTypeName, Long theInstanceId) {
+		private HistoryCountKey(@Nullable String theTypeName, @Nullable JpaPid theInstanceId) {
 			myTypeName = theTypeName;
-			myInstanceId = theInstanceId;
-			myHashCode = new HashCodeBuilder().append(myTypeName).append(myInstanceId).toHashCode();
+			if (theInstanceId != null) {
+				myInstanceId = theInstanceId.getId();
+				myPartitionId = theInstanceId.getPartitionId();
+			} else {
+				myInstanceId = null;
+				myPartitionId = null;
+			}
+			myHashCode = new HashCodeBuilder()
+					.append(myTypeName)
+					.append(myInstanceId)
+					.append(myPartitionId)
+					.toHashCode();
+		}
+
+		@Override
+		public boolean equals(Object theO) {
+			boolean retVal = false;
+			if (theO instanceof HistoryCountKey) {
+				HistoryCountKey that = (HistoryCountKey) theO;
+				retVal = new EqualsBuilder()
+						.append(myTypeName, that.myTypeName)
+						.append(myInstanceId, that.myInstanceId)
+						.isEquals();
+			}
+			return retVal;
+		}
+
+		@Override
+		public int hashCode() {
+			return myHashCode;
 		}
 
 		public static HistoryCountKey forSystem() {
@@ -272,19 +323,53 @@ public class MemoryCacheService {
 			return new HistoryCountKey(theType, null);
 		}
 
-		public static HistoryCountKey forInstance(@Nonnull Long theInstanceId) {
-			assert theInstanceId != null;
+		public static HistoryCountKey forInstance(@Nonnull JpaPid theInstanceId) {
 			return new HistoryCountKey(null, theInstanceId);
+		}
+	}
+
+	public static class ForcedIdCacheKey {
+
+		private final String myResourceType;
+		private final String myResourceId;
+		private final List<Integer> myRequestPartitionIds;
+		private final int myHashCode;
+
+		public ForcedIdCacheKey(
+				@Nullable String theResourceType,
+				@Nonnull String theResourceId,
+				@Nonnull RequestPartitionId theRequestPartitionId) {
+			myResourceType = theResourceType;
+			myResourceId = theResourceId;
+			if (theRequestPartitionId.hasPartitionIds()) {
+				myRequestPartitionIds = theRequestPartitionId.getPartitionIds();
+			} else {
+				myRequestPartitionIds = null;
+			}
+			myHashCode = Objects.hash(myResourceType, myResourceId, myRequestPartitionIds);
+		}
+
+		@Override
+		public String toString() {
+			return new ToStringBuilder(this, ToStringStyle.SHORT_PREFIX_STYLE)
+					.append("resType", myResourceType)
+					.append("resId", myResourceId)
+					.append("partId", myRequestPartitionIds)
+					.toString();
 		}
 
 		@Override
 		public boolean equals(Object theO) {
-			boolean retVal = false;
-			if (theO instanceof HistoryCountKey) {
-				HistoryCountKey that = (HistoryCountKey) theO;
-				retVal = new EqualsBuilder().append(myTypeName, that.myTypeName).append(myInstanceId, that.myInstanceId).isEquals();
+			if (this == theO) {
+				return true;
 			}
-			return retVal;
+			if (!(theO instanceof ForcedIdCacheKey)) {
+				return false;
+			}
+			ForcedIdCacheKey that = (ForcedIdCacheKey) theO;
+			return Objects.equals(myResourceType, that.myResourceType)
+					&& Objects.equals(myResourceId, that.myResourceId)
+					&& Objects.equals(myRequestPartitionIds, that.myRequestPartitionIds);
 		}
 
 		@Override
@@ -292,6 +377,11 @@ public class MemoryCacheService {
 			return myHashCode;
 		}
 
+		/**
+		 * Creates and returns a new unqualified versionless IIdType instance
+		 */
+		public IIdType toIdType(FhirContext theFhirCtx) {
+			return theFhirCtx.getVersion().newIdType(myResourceType, myResourceId);
+		}
 	}
-
 }

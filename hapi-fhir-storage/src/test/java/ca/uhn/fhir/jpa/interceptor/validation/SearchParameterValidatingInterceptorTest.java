@@ -10,9 +10,14 @@ import ca.uhn.fhir.jpa.searchparam.submit.interceptor.SearchParamValidatingInter
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.rest.api.server.storage.IResourcePersistentId;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
+import ca.uhn.fhir.util.HapiExtensions;
+import jakarta.annotation.Nonnull;
 import org.hl7.fhir.r4.model.Enumerations;
+import org.hl7.fhir.r4.model.Extension;
 import org.hl7.fhir.r4.model.Patient;
 import org.hl7.fhir.r4.model.SearchParameter;
+import org.hl7.fhir.r4.model.SimpleQuantity;
+import org.hl7.fhir.r4.model.StringType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,9 +31,7 @@ import java.util.stream.Collectors;
 
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.containsString;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -37,8 +40,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 public class SearchParameterValidatingInterceptorTest {
 
-	public static final String UPLIFT_URL = "https://some-url";
-	static final FhirContext ourFhirContext = FhirContext.forR4();
+	static final FhirContext ourFhirContext = FhirContext.forR4Cached();
 	static String ID1 = "ID1";
 	static String ID2 = "ID2";
 	@Mock
@@ -60,7 +62,6 @@ public class SearchParameterValidatingInterceptorTest {
 		mySearchParamValidatingInterceptor.setSearchParameterCanonicalizer(new SearchParameterCanonicalizer(ourFhirContext));
 		mySearchParamValidatingInterceptor.setIIDHelperService(myIdHelperService);
 		mySearchParamValidatingInterceptor.setDaoRegistry(myDaoRegistry);
-		mySearchParamValidatingInterceptor.addUpliftExtension(UPLIFT_URL);
 
 		myExistingSearchParameter = buildSearchParameterWithId(ID1);
 
@@ -98,9 +99,51 @@ public class SearchParameterValidatingInterceptorTest {
 			mySearchParamValidatingInterceptor.resourcePreCreate(newSearchParam, myRequestDetails);
 			fail();
 		} catch (UnprocessableEntityException e) {
-			assertThat(e.getMessage(), containsString("2196"));
+			assertThat(e.getMessage()).contains("2196");
 		}
 
+	}
+	@Test
+	public void whenCreateSpWithUpliftRefchains_Bad_WrongCodeDatatype() {
+		SearchParameter sp = buildReferenceSearchParameter();
+		Extension upliftRefChain = sp.addExtension().setUrl(HapiExtensions.EXTENSION_SEARCHPARAM_UPLIFT_REFCHAIN);
+		upliftRefChain.addExtension(HapiExtensions.EXTENSION_SEARCHPARAM_UPLIFT_REFCHAIN_PARAM_CODE, new SimpleQuantity().setValue(123L));
+		upliftRefChain.addExtension(HapiExtensions.EXTENSION_SEARCHPARAM_UPLIFT_REFCHAIN_ELEMENT_NAME, new StringType("element1"));
+		try {
+			mySearchParamValidatingInterceptor.resourcePreCreate(sp, myRequestDetails);
+			fail();
+		} catch (UnprocessableEntityException e) {
+			assertThat(e.getMessage()).contains("2284");
+		}
+
+	}
+
+	@Test
+	public void whenCreateSpWithUpliftRefchains_Bad_NoCode() {
+		SearchParameter sp = buildReferenceSearchParameter();
+		Extension upliftRefChain = sp.addExtension().setUrl(HapiExtensions.EXTENSION_SEARCHPARAM_UPLIFT_REFCHAIN);
+		upliftRefChain.addExtension(HapiExtensions.EXTENSION_SEARCHPARAM_UPLIFT_REFCHAIN_ELEMENT_NAME, new StringType("element1"));
+		try {
+			mySearchParamValidatingInterceptor.resourcePreCreate(sp, myRequestDetails);
+			fail();
+		} catch (UnprocessableEntityException e) {
+			assertThat(e.getMessage()).contains("2283");
+		}
+
+	}
+
+	@Nonnull
+	private static SearchParameter buildReferenceSearchParameter() {
+		SearchParameter sp = new SearchParameter();
+		sp.setCode("subject");
+		sp.setName("subject");
+		sp.setDescription("Modified Subject");
+		sp.setStatus(Enumerations.PublicationStatus.ACTIVE);
+		sp.setType(Enumerations.SearchParamType.REFERENCE);
+		sp.setExpression("Encounter.subject");
+		sp.addBase("Encounter");
+		sp.addTarget("Patient");
+		return sp;
 	}
 
 	@Test
@@ -126,7 +169,7 @@ public class SearchParameterValidatingInterceptorTest {
 			mySearchParamValidatingInterceptor.resourcePreUpdate(null, newSearchParam, myRequestDetails);
 			fail();
 		} catch (UnprocessableEntityException e) {
-			assertTrue(e.getMessage().contains("2125"));
+			assertThat(e.getMessage()).contains("2125");
 		}
 	}
 
