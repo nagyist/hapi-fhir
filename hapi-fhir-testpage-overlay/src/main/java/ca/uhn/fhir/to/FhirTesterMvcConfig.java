@@ -1,7 +1,9 @@
 package ca.uhn.fhir.to;
 
+import ca.uhn.fhir.system.HapiSystemProperties;
 import ca.uhn.fhir.to.mvc.AnnotationMethodHandlerAdapterConfigurer;
 import ca.uhn.fhir.to.util.WebUtil;
+import jakarta.annotation.Nonnull;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
@@ -10,12 +12,10 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter;
-import org.thymeleaf.spring5.SpringTemplateEngine;
-import org.thymeleaf.spring5.templateresolver.SpringResourceTemplateResolver;
-import org.thymeleaf.spring5.view.ThymeleafViewResolver;
+import org.thymeleaf.spring6.SpringTemplateEngine;
+import org.thymeleaf.spring6.templateresolver.SpringResourceTemplateResolver;
+import org.thymeleaf.spring6.view.ThymeleafViewResolver;
 import org.thymeleaf.templatemode.TemplateMode;
-
-import javax.annotation.Nonnull;
 
 @Configuration
 @EnableWebMvc
@@ -25,6 +25,7 @@ public class FhirTesterMvcConfig implements WebMvcConfigurer {
 	@Override
 	public void addResourceHandlers(@Nonnull ResourceHandlerRegistry theRegistry) {
 		WebUtil.webJarAddBoostrap(theRegistry);
+		WebUtil.webJarAddAceBuilds(theRegistry);
 		WebUtil.webJarAddJQuery(theRegistry);
 		WebUtil.webJarAddFontAwesome(theRegistry);
 		WebUtil.webJarAddJSTZ(theRegistry);
@@ -49,7 +50,7 @@ public class FhirTesterMvcConfig implements WebMvcConfigurer {
 		resolver.setTemplateMode(TemplateMode.HTML);
 		resolver.setCharacterEncoding("UTF-8");
 
-		if (theTesterConfig.getDebugTemplatesMode()) {
+		if (theTesterConfig.getDebugTemplatesMode() || HapiSystemProperties.isUnitTestModeEnabled()) {
 			resolver.setCacheable(false);
 		}
 
@@ -57,7 +58,8 @@ public class FhirTesterMvcConfig implements WebMvcConfigurer {
 	}
 
 	@Bean
-	public AnnotationMethodHandlerAdapterConfigurer annotationMethodHandlerAdapterConfigurer(@Qualifier("requestMappingHandlerAdapter") RequestMappingHandlerAdapter theAdapter) {
+	public AnnotationMethodHandlerAdapterConfigurer annotationMethodHandlerAdapterConfigurer(
+			@Qualifier("requestMappingHandlerAdapter") RequestMappingHandlerAdapter theAdapter) {
 		return new AnnotationMethodHandlerAdapterConfigurer(theAdapter);
 	}
 
@@ -76,5 +78,4 @@ public class FhirTesterMvcConfig implements WebMvcConfigurer {
 
 		return templateEngine;
 	}
-
 }

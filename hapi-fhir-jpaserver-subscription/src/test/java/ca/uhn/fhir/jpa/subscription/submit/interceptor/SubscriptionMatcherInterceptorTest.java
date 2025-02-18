@@ -1,60 +1,79 @@
 package ca.uhn.fhir.jpa.subscription.submit.interceptor;
 
-import ca.uhn.fhir.jpa.model.entity.StorageSettings;
-import ca.uhn.fhir.jpa.subscription.channel.api.ChannelProducerSettings;
-import ca.uhn.fhir.jpa.subscription.channel.subscription.SubscriptionChannelFactory;
+import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.jpa.model.config.SubscriptionSettings;
+import ca.uhn.fhir.jpa.subscription.match.matcher.matching.IResourceModifiedConsumer;
+import ca.uhn.fhir.jpa.subscription.model.ResourceModifiedMessage;
+import ca.uhn.fhir.subscription.api.IResourceModifiedMessagePersistenceSvc;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.messaging.MessageDeliveryException;
 
-import java.util.Set;
-
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.is;
-import static org.hl7.fhir.dstu2.model.Subscription.SubscriptionChannelType.RESTHOOK;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-public class SubscriptionMatcherInterceptorTest {
+class SubscriptionMatcherInterceptorTest {
 
 	@Mock
-	StorageSettings myStorageSettings;
+	private FhirContext myFhirContext;
+
 	@Mock
-	SubscriptionChannelFactory mySubscriptionChannelFactory;
+	private SubscriptionSettings mySubscriptionSettings;
+
+	@Mock
+	private IResourceModifiedConsumer myResourceModifiedConsumer;
+
+	@Mock
+	private IResourceModifiedMessagePersistenceSvc myResourceModifiedMessagePersistenceSvc;
+
+	@Mock
+	private ResourceModifiedMessage theResourceModifiedMessage;
+
 	@InjectMocks
-	SubscriptionMatcherInterceptor myUnitUnderTest;
-	@Captor
-	ArgumentCaptor<ChannelProducerSettings> myArgumentCaptor;
+	private SubscriptionMatcherInterceptor subscriptionMatcherInterceptor;
 
-	@ParameterizedTest
-	@ValueSource(booleans = {false, true})
-	public void testMethodStartIfNeeded_withQualifySubscriptionMatchingChannelNameProperty_mayQualifyChannelName(boolean theIsQualifySubMatchingChannelName){
-		// given
-		boolean expectedResult = theIsQualifySubMatchingChannelName;
-		when(myStorageSettings.isQualifySubscriptionMatchingChannelName()).thenReturn(theIsQualifySubMatchingChannelName);
-		when(myStorageSettings.getSupportedSubscriptionTypes()).thenReturn(Set.of(RESTHOOK));
+	@Test
+	void testProcessResourceModifiedMessageQueuedImmediatelySuccess() {
+		// Arrange
+		when(mySubscriptionSettings.isSubscriptionChangeQueuedImmediately()).thenReturn(true);
+		when(theResourceModifiedMessage.hasPayloadType(myFhirContext, "Subscription")).thenReturn(true);
 
-		// when
-		myUnitUnderTest.startIfNeeded();
+		// Act
+		subscriptionMatcherInterceptor.processResourceModifiedMessage(theResourceModifiedMessage);
 
-		// then
-		ChannelProducerSettings capturedChannelProducerSettings = getCapturedChannelProducerSettings();
-		assertThat(capturedChannelProducerSettings.isQualifyChannelName(), is(expectedResult));
-
+		// Assert
+		verify(myResourceModifiedConsumer, times(1)).submitResourceModified(theResourceModifiedMessage);
+		verify(myResourceModifiedMessagePersistenceSvc, never()).persist(any());
 	}
 
-	private ChannelProducerSettings getCapturedChannelProducerSettings(){
-		verify(mySubscriptionChannelFactory).newMatchingSendingChannel(anyString(), myArgumentCaptor.capture());
-		return myArgumentCaptor.getValue();
+	@Test
+	void testProcessResourceModifiedMessageQueuedImmediatelyFailure() {
+		// Arrange
+		when(mySubscriptionSettings.isSubscriptionChangeQueuedImmediately()).thenReturn(true);
+		when(theResourceModifiedMessage.hasPayloadType(myFhirContext, "Subscription")).thenReturn(true);
+		doThrow(new MessageDeliveryException("Submission failure")).when(myResourceModifiedConsumer).submitResourceModified(theResourceModifiedMessage);
+
+		// Act
+		subscriptionMatcherInterceptor.processResourceModifiedMessage(theResourceModifiedMessage);
+
+		// Assert
+		verify(myResourceModifiedConsumer, times(1)).submitResourceModified(theResourceModifiedMessage);
+		verify(myResourceModifiedMessagePersistenceSvc, times(1)).persist(theResourceModifiedMessage);
 	}
 
+	@Test
+	void testProcessResourceModifiedMessageNotQueuedImmediately() {
+		// Arrange
+		when(mySubscriptionSettings.isSubscriptionChangeQueuedImmediately()).thenReturn(false);
 
+		// Act
+		subscriptionMatcherInterceptor.processResourceModifiedMessage(theResourceModifiedMessage);
+
+		// Assert
+		verify(myResourceModifiedConsumer, never()).submitResourceModified(any());
+		verify(myResourceModifiedMessagePersistenceSvc, times(1)).persist(theResourceModifiedMessage);
+	}
 }

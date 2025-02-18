@@ -1,10 +1,8 @@
-package ca.uhn.fhir.jpa.mdm.config;
-
 /*-
  * #%L
  * HAPI FHIR JPA Server - Master Data Management
  * %%
- * Copyright (C) 2014 - 2023 Smile CDR, Inc.
+ * Copyright (C) 2014 - 2025 Smile CDR, Inc.
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +17,11 @@ package ca.uhn.fhir.jpa.mdm.config;
  * limitations under the License.
  * #L%
  */
+package ca.uhn.fhir.jpa.mdm.config;
 
 import ca.uhn.fhir.IHapiBootOrder;
 import ca.uhn.fhir.mdm.api.IMdmSettings;
+import ca.uhn.fhir.mdm.api.MdmModeEnum;
 import ca.uhn.fhir.mdm.provider.MdmProviderLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,8 +37,10 @@ public class MdmLoader {
 
 	@Autowired
 	IMdmSettings myMdmSettings;
+
 	@Autowired
 	MdmProviderLoader myMdmProviderLoader;
+
 	@Autowired
 	MdmSubscriptionLoader myMdmSubscriptionLoader;
 
@@ -48,6 +50,12 @@ public class MdmLoader {
 	@Order(IHapiBootOrder.AFTER_SUBSCRIPTION_INITIALIZED)
 	public void updateSubscriptions() {
 		if (!myMdmSettings.isEnabled()) {
+			return;
+		}
+
+		myMdmProviderLoader.loadPatientMatchProvider();
+
+		if (myMdmSettings.getMode() == MdmModeEnum.MATCH_ONLY) {
 			return;
 		}
 

@@ -43,6 +43,7 @@ import ca.uhn.fhir.model.dstu2.resource.Medication;
 import ca.uhn.fhir.model.dstu2.resource.MedicationAdministration;
 import ca.uhn.fhir.model.dstu2.resource.MedicationOrder;
 import ca.uhn.fhir.model.dstu2.resource.Observation;
+import ca.uhn.fhir.model.dstu2.resource.OperationOutcome;
 import ca.uhn.fhir.model.dstu2.resource.Organization;
 import ca.uhn.fhir.model.dstu2.resource.Patient;
 import ca.uhn.fhir.model.dstu2.resource.Practitioner;
@@ -71,9 +72,11 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import javax.persistence.EntityManager;
+import jakarta.persistence.EntityManager;
 import java.util.ArrayList;
 import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 @ExtendWith(SpringExtension.class)
 @ContextConfiguration(classes = {TestDstu2Config.class})
@@ -212,6 +215,7 @@ public abstract class BaseJpaDstu2Test extends BaseJpaTest {
 	@Autowired
 	private ValidationSupportChain myJpaValidationSupportChain;
 
+
 	@RegisterExtension
 	private final PreventDanglingInterceptorsExtension myPreventDanglingInterceptorsExtension = new PreventDanglingInterceptorsExtension(()-> myInterceptorRegistry);
 
@@ -244,14 +248,6 @@ public abstract class BaseJpaDstu2Test extends BaseJpaTest {
 		return myTxManager;
 	}
 
-	@Override
-	public TransactionTemplate newTxTemplate() {
-		TransactionTemplate retVal = new TransactionTemplate(myTxManager);
-		retVal.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-		retVal.afterPropertiesSet();
-		return retVal;
-	}
-
 	@AfterEach
 	public void afterEachClearCaches() {
 		myJpaValidationSupportChain.invalidateCaches();
@@ -263,5 +259,17 @@ public abstract class BaseJpaDstu2Test extends BaseJpaTest {
 			retVal.add(next.getResource().getId().toUnqualifiedVersionless());
 		}
 		return retVal;
+	}
+
+	public void assertHasErrors(OperationOutcome theOperationOutcome) {
+		assertThat(hasValidationErrors(theOperationOutcome)).as("Expected validation errors, found none").isTrue();
+	}
+
+	public void assertHasNoErrors(OperationOutcome theOperationOutcome) {
+		assertThat(hasValidationErrors(theOperationOutcome)).as("Expected no validation errors, found some").isFalse();
+	}
+
+	private static boolean hasValidationErrors(OperationOutcome theOperationOutcome) {
+		return theOperationOutcome.getIssue().stream().anyMatch(t -> "error".equals(t.getSeverity()));
 	}
 }

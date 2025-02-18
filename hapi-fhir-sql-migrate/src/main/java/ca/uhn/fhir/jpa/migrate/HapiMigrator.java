@@ -1,10 +1,8 @@
-package ca.uhn.fhir.jpa.migrate;
-
 /*-
  * #%L
  * HAPI FHIR Server - SQL Migration
  * %%
- * Copyright (C) 2014 - 2023 Smile CDR, Inc.
+ * Copyright (C) 2014 - 2025 Smile CDR, Inc.
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,24 +17,26 @@ package ca.uhn.fhir.jpa.migrate;
  * limitations under the License.
  * #L%
  */
+package ca.uhn.fhir.jpa.migrate;
 
 import ca.uhn.fhir.i18n.Msg;
 import ca.uhn.fhir.jpa.migrate.dao.HapiMigrationDao;
 import ca.uhn.fhir.jpa.migrate.taskdef.BaseTask;
 import ca.uhn.fhir.jpa.migrate.taskdef.InitializeSchemaTask;
+import ca.uhn.fhir.jpa.migrate.tasks.api.TaskFlagEnum;
 import ca.uhn.fhir.system.HapiSystemProperties;
 import ca.uhn.fhir.util.StopWatch;
 import com.google.common.annotations.VisibleForTesting;
+import jakarta.annotation.Nonnull;
 import org.apache.commons.lang3.Validate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.annotation.Nonnull;
-import javax.sql.DataSource;
 import java.sql.SQLException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import javax.sql.DataSource;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
@@ -45,6 +45,7 @@ public class HapiMigrator {
 	private static final Logger ourLog = LoggerFactory.getLogger(HapiMigrator.class);
 	private final MigrationTaskList myTaskList = new MigrationTaskList();
 	private boolean myDryRun;
+	private boolean myRunHeavyweightSkippableTasks;
 	private boolean myNoColumnShrink;
 	private final DriverTypeEnum myDriverType;
 	private final DataSource myDataSource;
@@ -54,19 +55,45 @@ public class HapiMigrator {
 	public HapiMigrator(String theMigrationTableName, DataSource theDataSource, DriverTypeEnum theDriverType) {
 		myDriverType = theDriverType;
 		myDataSource = theDataSource;
-		myHapiMigrationStorageSvc = new HapiMigrationStorageSvc(new HapiMigrationDao(theDataSource, theDriverType, theMigrationTableName));
+		myHapiMigrationStorageSvc =
+				new HapiMigrationStorageSvc(new HapiMigrationDao(theDataSource, theDriverType, theMigrationTableName));
 	}
 
 	public DataSource getDataSource() {
 		return myDataSource;
 	}
 
+	/**
+	 * If set to true, instead of executing migrations, will instead simply print the SQL that would be executed against the connection.
+	 * @return A boolean indicating whether or not the migration should be a dry run
+	 */
 	public boolean isDryRun() {
 		return myDryRun;
 	}
 
+	/**
+	 * If set to true, instead of executing migrations, will instead simply print the SQL that would be executed against the connection.
+	 */
 	public void setDryRun(boolean theDryRun) {
 		myDryRun = theDryRun;
+	}
+
+	/**
+	 * Should we run the tasks marked with {@link ca.uhn.fhir.jpa.migrate.tasks.api.TaskFlagEnum#HEAVYWEIGHT_SKIP_BY_DEFAULT}
+	 *
+	 * @since 7.4.0
+	 */
+	public boolean isRunHeavyweightSkippableTasks() {
+		return myRunHeavyweightSkippableTasks;
+	}
+
+	/**
+	 * Should we run the tasks marked with {@link ca.uhn.fhir.jpa.migrate.tasks.api.TaskFlagEnum#HEAVYWEIGHT_SKIP_BY_DEFAULT}
+	 *
+	 * @since 7.4.0
+	 */
+	public void setRunHeavyweightSkippableTasks(boolean theRunHeavyweightSkippableTasks) {
+		myRunHeavyweightSkippableTasks = theRunHeavyweightSkippableTasks;
 	}
 
 	public boolean isNoColumnShrink() {
@@ -81,13 +108,15 @@ public class HapiMigrator {
 		return myDriverType;
 	}
 
-
 	protected StringBuilder buildExecutedStatementsString(MigrationResult theMigrationResult) {
 		StringBuilder statementBuilder = new StringBuilder();
 		String lastTable = null;
 		for (BaseTask.ExecutedStatement next : theMigrationResult.executedStatements) {
 			if (!Objects.equals(lastTable, next.getTableName())) {
-				statementBuilder.append("\n\n-- Table: ").append(next.getTableName()).append("\n");
+				statementBuilder
+						.append("\n\n-- Table: ")
+						.append(next.getTableName())
+						.append("\n");
 				lastTable = next.getTableName();
 			}
 
@@ -121,11 +150,25 @@ public class HapiMigrator {
 		// Lock the migration table so only one server migrates the database at once
 		try (HapiMigrationLock ignored = new HapiMigrationLock(myHapiMigrationStorageSvc)) {
 			MigrationTaskList newTaskList = myHapiMigrationStorageSvc.diff(myTaskList);
-			ourLog.info("{} of these {} migration tasks are new.  Executing them now.", newTaskList.size(), myTaskList.size());
+			ourLog.info(
+					"{} of these {} migration tasks are new.  Executing them now.",
+					newTaskList.size(),
+					myTaskList.size());
 
-			try (DriverTypeEnum.ConnectionProperties connectionProperties = getDriverType().newConnectionProperties(getDataSource())) {
+			try (DriverTypeEnum.ConnectionProperties connectionProperties =
+					getDriverType().newConnectionProperties(getDataSource())) {
 
-				newTaskList.forEach(next -> {
+				if (!isRunHeavyweightSkippableTasks()) {
+					newTaskList.removeIf(BaseTask::isHeavyweightSkippableTask);
+				}
+
+				boolean initializedSchema = false;
+				for (BaseTask next : newTaskList) {
+					if (initializedSchema && !next.hasFlag(TaskFlagEnum.RUN_DURING_SCHEMA_INITIALIZATION)) {
+						ourLog.info("Skipping task {} because schema is being initialized", next.getMigrationVersion());
+						recordTaskAsCompletedIfNotDryRun(next, 0L, true);
+						continue;
+					}
 
 					next.setDriverType(getDriverType());
 					next.setDryRun(isDryRun());
@@ -133,7 +176,9 @@ public class HapiMigrator {
 					next.setConnectionProperties(connectionProperties);
 
 					executeTask(next, retval);
-				});
+
+					initializedSchema |= next.initializedSchema();
+				}
 			}
 		} catch (Exception e) {
 			ourLog.error("Migration failed", e);
@@ -144,7 +189,9 @@ public class HapiMigrator {
 
 		if (isDryRun()) {
 			StringBuilder statementBuilder = buildExecutedStatementsString(retval);
-			ourLog.info("SQL that would be executed:\n\n***********************************\n{}***********************************", statementBuilder);
+			ourLog.info(
+					"SQL that would be executed:\n\n***********************************\n{}***********************************",
+					statementBuilder);
 		}
 
 		return retval;
@@ -160,29 +207,32 @@ public class HapiMigrator {
 			}
 			preExecute(theTask);
 			theTask.execute();
-			postExecute(theTask, sw, true);
+			recordTaskAsCompletedIfNotDryRun(theTask, sw.getMillis(), true);
 			theMigrationResult.changes += theTask.getChangesCount();
+			theMigrationResult.executionResult = theTask.getExecutionResult();
 			theMigrationResult.executedStatements.addAll(theTask.getExecutedStatements());
 			theMigrationResult.succeededTasks.add(theTask);
 		} catch (SQLException | HapiMigrationException e) {
 			theMigrationResult.failedTasks.add(theTask);
-			postExecute(theTask, sw, false);
+			recordTaskAsCompletedIfNotDryRun(theTask, sw.getMillis(), false);
 			String description = theTask.getDescription();
 			if (isBlank(description)) {
 				description = theTask.getClass().getSimpleName();
 			}
-			String prefix = "Failure executing task \"" + description + "\", aborting! Cause: ";
+			String prefix = String.format(
+					"Failure executing task '%s', for driver: %s, aborting! Cause: ", description, getDriverType());
 			throw new HapiMigrationException(Msg.code(47) + prefix + e, theMigrationResult, e);
 		}
 	}
 
 	private void preExecute(BaseTask theTask) {
 		myCallbacks.forEach(action -> action.preExecution(theTask));
-
 	}
 
-	private void postExecute(BaseTask theNext, StopWatch theStopWatch, boolean theSuccess) {
-		myHapiMigrationStorageSvc.saveTask(theNext, Math.toIntExact(theStopWatch.getMillis()), theSuccess);
+	private void recordTaskAsCompletedIfNotDryRun(BaseTask theNext, long theExecutionMillis, boolean theSuccess) {
+		if (!theNext.isDryRun()) {
+			myHapiMigrationStorageSvc.saveTask(theNext, Math.toIntExact(theExecutionMillis), theSuccess);
+		}
 	}
 
 	public void addTasks(Iterable<BaseTask> theMigrationTasks) {
@@ -198,12 +248,21 @@ public class HapiMigrator {
 		}
 	}
 
+	/**
+	 * Unlike {@link #addTasks(Iterable)}, this method always adds all tasks
+	 */
+	public void addAllTasksForUnitTest(Iterable<BaseTask> theMigrationTasks) {
+		myTaskList.append(theMigrationTasks);
+	}
+
 	public void addTask(BaseTask theTask) {
+		// Don't add a check for unit test mode here - We call this from
+		// tests which expect tasks to always be added
 		myTaskList.add(theTask);
 	}
 
 	public void setCallbacks(@Nonnull List<IHapiMigrationCallback> theCallbacks) {
-		Validate.notNull(theCallbacks);
+		Validate.notNull(theCallbacks, "theCallbacks must not be null");
 		myCallbacks = theCallbacks;
 	}
 
@@ -213,6 +272,8 @@ public class HapiMigrator {
 	}
 
 	public void createMigrationTableIfRequired() {
-		myHapiMigrationStorageSvc.createMigrationTableIfRequired();
+		if (!myDryRun) {
+			myHapiMigrationStorageSvc.createMigrationTableIfRequired();
+		}
 	}
 }

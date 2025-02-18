@@ -1,10 +1,8 @@
-package ca.uhn.fhir.rest.api.server.storage;
-
 /*-
  * #%L
  * HAPI FHIR - Server Framework
  * %%
- * Copyright (C) 2014 - 2023 Smile CDR, Inc.
+ * Copyright (C) 2014 - 2025 Smile CDR, Inc.
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +17,7 @@ package ca.uhn.fhir.rest.api.server.storage;
  * limitations under the License.
  * #L%
  */
+package ca.uhn.fhir.rest.api.server.storage;
 
 import org.hl7.fhir.instance.model.api.IIdType;
 
@@ -30,9 +29,8 @@ import java.util.Objects;
  */
 public abstract class BaseResourcePersistentId<T> implements IResourcePersistentId<T> {
 	private Long myVersion;
-	private final String myResourceType;
+	private String myResourceType;
 	private IIdType myAssociatedResourceId;
-
 
 	protected BaseResourcePersistentId(String theResourceType) {
 		myResourceType = theResourceType;
@@ -67,7 +65,6 @@ public abstract class BaseResourcePersistentId<T> implements IResourcePersistent
 		return Objects.hash(myVersion);
 	}
 
-
 	@Override
 	public Long getVersion() {
 		return myVersion;
@@ -85,5 +82,9 @@ public abstract class BaseResourcePersistentId<T> implements IResourcePersistent
 	@Override
 	public String getResourceType() {
 		return myResourceType;
+	}
+
+	public void setResourceType(String theResourceType) {
+		myResourceType = theResourceType;
 	}
 }
